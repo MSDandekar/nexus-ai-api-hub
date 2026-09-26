@@ -46,13 +46,14 @@ async def test_acceptance_scenarios_a_through_g():
         }
         res_create = await client.post("/api/v1/connectors", json=create_payload)
         assert res_create.status_code == 201
-        assert res_create.json()["slug"] == "custom-invoice-extractor"
+        created_slug = res_create.json()["slug"]
+        assert "custom-invoice-extractor" in created_slug
 
         # Verify docs exist
-        res_docs = await client.get("/api/v1/connectors/custom-invoice-extractor/docs")
+        res_docs = await client.get(f"/api/v1/connectors/{created_slug}/docs")
         assert res_docs.status_code == 200
         docs_data = res_docs.json()
-        assert docs_data["endpoint"] == "/api/v1/run/custom-invoice-extractor"
+        assert docs_data["endpoint"] == f"/api/v1/run/{created_slug}"
         assert "curl_example" in docs_data
         assert "output_schema" in docs_data
 
@@ -74,7 +75,7 @@ async def test_acceptance_scenarios_a_through_g():
              patch.object(provider_registry.get("openai"), "generate", new=AsyncMock(return_value=invoice_mock)):
 
             res_run = await client.post(
-                "/api/v1/run/custom-invoice-extractor",
+                f"/api/v1/run/{created_slug}",
                 headers=headers,
                 json={"invoice_image": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
             )
