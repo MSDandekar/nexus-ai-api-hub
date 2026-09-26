@@ -1,0 +1,22 @@
+services:
+  ai-nexus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_nexus_gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEFAULT_ADMIN_API_KEY=nexus-dev-master-key-2026
+      - DATABASE_URL=sqlite+aiosqlite:///./data/ai_nexus.db
+      - ENVIRONMENT=production
+    volumes:
+      - nexus_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  nexus_data:
