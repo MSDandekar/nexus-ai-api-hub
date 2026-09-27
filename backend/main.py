@@ -18,11 +18,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai_nexus.app")
 
+from backend.core.config import settings, get_gemini_api_key, get_openai_api_key, get_groq_api_key
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing AI Nexus Database & Seeds...")
     try:
         await seed_database()
+        logger.info(
+            f"AI Providers status — Gemini configured: {bool(get_gemini_api_key())}, "
+            f"OpenAI configured: {bool(get_openai_api_key())}, "
+            f"Groq configured: {bool(get_groq_api_key())}"
+        )
         logger.info("AI Nexus initialized successfully.")
     except Exception as e:
         logger.error(f"Startup initialization warning: {e}")

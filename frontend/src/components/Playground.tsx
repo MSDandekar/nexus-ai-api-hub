@@ -18,9 +18,17 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Initialize defaults
+  // Track previous connector slug to avoid resetting output on parent re-renders
+  const prevSlugRef = React.useRef<string | null>(null);
+
+  // Initialize defaults only when connector slug changes
   useEffect(() => {
     if (!connector) return;
+    if (prevSlugRef.current === connector.slug) {
+      return;
+    }
+    prevSlugRef.current = connector.slug;
+
     const initial: Record<string, any> = {};
     for (const inp of connector.inputs || []) {
       if (inp.default_value !== null && inp.default_value !== undefined) {
@@ -40,7 +48,7 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
     setImagePreviews({});
     setResponseResult(null);
     setErrorMsg(null);
-  }, [connector]);
+  }, [connector?.slug]);
 
   const handleInputChange = (name: string, val: any) => {
     setFormData(prev => ({ ...prev, [name]: val }));
@@ -63,7 +71,6 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
     if (!connector) return;
     setLoading(true);
     setErrorMsg(null);
-    setResponseResult(null);
 
     try {
       // Process JSON field strings
@@ -341,13 +348,21 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Structured Response Output</h3>
               {responseResult && (
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => copyToClipboard(JSON.stringify(responseResult.data, null, 2))}
-                >
-                  {copied ? <Check size={13} color="var(--accent-emerald)" /> : <Copy size={13} />}
-                  {copied ? "Copied" : "Copy JSON"}
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { setResponseResult(null); setErrorMsg(null); }}
+                  >
+                    Clear Output
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => copyToClipboard(JSON.stringify(responseResult.data, null, 2))}
+                  >
+                    {copied ? <Check size={13} color="var(--accent-emerald)" /> : <Copy size={13} />}
+                    {copied ? "Copied" : "Copy JSON"}
+                  </button>
+                </div>
               )}
             </div>
 

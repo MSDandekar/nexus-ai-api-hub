@@ -17,6 +17,19 @@ class ModelInfo(BaseModel):
 DEFAULT_MODEL_CATALOG: list[ModelInfo] = [
     ModelInfo(
         provider="gemini",
+        model_id="gemini-3.8-flash",
+        display_name="Gemini 3.8 Flash",
+        supports_text=True,
+        supports_vision=True,
+        supports_json=True,
+        input_cost_per_m=0.15,
+        output_cost_per_m=0.60,
+        quality_score=92.0,
+        speed_score=96.0,
+        is_enabled=True
+    ),
+    ModelInfo(
+        provider="gemini",
         model_id="gemini-2.5-flash",
         display_name="Gemini 2.5 Flash",
         supports_text=True,

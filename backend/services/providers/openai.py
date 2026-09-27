@@ -3,7 +3,7 @@ import time
 import httpx
 from typing import Optional, Any
 from backend.services.providers.base import AIProvider, ProviderResult, ImagePayload, FilePayload
-from backend.core.config import settings
+from backend.core.config import settings, get_openai_api_key
 
 class OpenAIProvider(AIProvider):
     @property
@@ -11,7 +11,7 @@ class OpenAIProvider(AIProvider):
         return "openai"
 
     def is_configured(self) -> bool:
-        return bool(settings.OPENAI_API_KEY)
+        return bool(get_openai_api_key())
 
     def supports_vision(self, model_id: str) -> bool:
         model_lower = model_id.lower()
@@ -30,7 +30,8 @@ class OpenAIProvider(AIProvider):
         files: Optional[list[FilePayload]] = None,
         temperature: float = 0.1
     ) -> ProviderResult:
-        if not self.is_configured():
+        api_key = get_openai_api_key()
+        if not api_key:
             raise ValueError("OPENAI_API_KEY is not configured in environment variables.")
 
         url = "https://api.openai.com/v1/chat/completions"
@@ -94,7 +95,7 @@ class OpenAIProvider(AIProvider):
             response = await client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json=payload

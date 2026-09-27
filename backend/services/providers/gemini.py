@@ -1,9 +1,10 @@
 import json
 import time
+import asyncio
 import httpx
 from typing import Optional, Any
 from backend.services.providers.base import AIProvider, ProviderResult, ImagePayload, FilePayload
-from backend.core.config import settings
+from backend.core.config import settings, get_gemini_api_key
 
 class GeminiProvider(AIProvider):
     @property
@@ -11,10 +12,10 @@ class GeminiProvider(AIProvider):
         return "gemini"
 
     def is_configured(self) -> bool:
-        return bool(settings.GEMINI_API_KEY)
+        return bool(get_gemini_api_key())
 
     def supports_vision(self, model_id: str) -> bool:
-        # All modern Gemini 1.5 and 2.x/2.5 models support vision
+        # All modern Gemini models support vision
         model_lower = model_id.lower()
         return "gemini" in model_lower
 
@@ -31,11 +32,16 @@ class GeminiProvider(AIProvider):
         files: Optional[list[FilePayload]] = None,
         temperature: float = 0.1
     ) -> ProviderResult:
-        if not self.is_configured():
+        api_key = get_gemini_api_key()
+        if not api_key:
             raise ValueError("GEMINI_API_KEY is not configured in environment variables.")
 
         # Clean model name (remove 'models/' prefix if present)
-        clean_model = model_id.replace("models/", "")
+        clean_model = model_id.replace("models/", "").strip()
+        # Normalize flash models to Google's active load-balanced endpoint
+        if clean_model in ("gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash", "gemini-3.8-flash"):
+            clean_model = "gemini-flash-latest"
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
 
         # Build parts
@@ -92,7 +98,7 @@ class GeminiProvider(AIProvider):
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 url,
-                params={"key": settings.GEMINI_API_KEY},
+                params={"key": api_key},
                 json=payload,
                 headers={"Content-Type": "application/json"}
             )

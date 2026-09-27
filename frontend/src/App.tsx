@@ -39,7 +39,10 @@ export function App() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 15000);
+    // Periodically update dashboard metrics without re-fetching static connector structures
+    const interval = setInterval(() => {
+      fetchMetrics().then(setMetrics).catch(() => {});
+    }, 15000);
     return () => clearInterval(interval);
   }, []);
 
