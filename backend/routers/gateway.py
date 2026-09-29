@@ -1,5 +1,6 @@
 import time
 import json
+import re
 from typing import Optional, Any
 from fastapi import APIRouter, Depends, Request, Header, HTTPException, status
 from fastapi.responses import JSONResponse
@@ -261,29 +262,39 @@ async def run_connector(
             fallback_enabled=connector.fallback_enabled,
             fallback_provider=connector.fallback_provider,
             fallback_model=connector.fallback_model,
-            temperature=0.1
+            temperature=0.1,
+            routing_strategy=connector.routing_strategy,
+            trace=trace
         )
         final_result = report.result
         fallback_used = report.fallback_used
         fallback_prov = report.fallback_provider
         fallback_mod = report.fallback_model
-        
-        if fallback_used:
-            trace.append({
-                "step": "AI Inference (Fallback)",
-                "status": "warning",
-                "detail": f"Primary {report.primary_provider}/{report.primary_model} failed ({report.primary_error}). Succeeded on fallback {fallback_prov}/{fallback_mod} in {final_result.latency_ms}ms"
-            })
-        else:
-            trace.append({
-                "step": "AI Inference",
-                "status": "ok",
-                "detail": f"Completed via {final_result.provider}/{final_result.model} in {final_result.latency_ms}ms"
-            })
 
     except Exception as exec_err:
         elapsed_err = round((time.perf_counter() - start_total_time) * 1000, 2)
-        trace.append({"step": "AI Inference", "status": "failed", "detail": str(exec_err)})
+        raw_err_str = str(exec_err)
+        
+        # Check if ProviderException
+        if hasattr(exec_err, "error_kind"):
+            err_code = f"PROVIDER_{exec_err.error_kind.value}" if not exec_err.error_kind.value.startswith("PROVIDER_") else exec_err.error_kind.value
+            err_msg = exec_err.message
+        else:
+            is_quota = "429" in raw_err_str or "quota" in raw_err_str.lower() or "resource_exhausted" in raw_err_str.lower()
+            err_code = "PROVIDER_QUOTA_EXCEEDED" if is_quota else "PROVIDER_ERROR"
+            err_msg = (
+                "AI provider quota or availability limit reached. No configured fallback provider was available. Please try again later or configure another provider."
+                if is_quota
+                else "AI Provider inference execution failed."
+            )
+
+        # Sanitize sensitive tokens such as key=...
+        sanitized_err = re.sub(r'(?:key|token|apiKey)=([A-Za-z0-9._-]+)', r'key=[REDACTED]', raw_err_str, flags=re.IGNORECASE)
+
+        # If not already recorded in trace, record failure
+        if not any(t.get("status") == "failed" for t in trace):
+            trace.append({"step": "AI Inference", "status": "failed", "detail": err_msg})
+
         await log_request_event(
             db=db,
             request_id=request_id,
@@ -298,8 +309,8 @@ async def run_connector(
             fallback_used=connector.fallback_enabled,
             fallback_provider=connector.fallback_provider,
             fallback_model=connector.fallback_model,
-            error_code="PROVIDER_ERROR",
-            error_message=str(exec_err),
+            error_code=err_code,
+            error_message=err_msg,
             request_payload=validation_result.cleaned_data
         )
         return JSONResponse(
@@ -308,9 +319,9 @@ async def run_connector(
                 "success": False,
                 "data": None,
                 "error": {
-                    "code": "PROVIDER_ERROR",
-                    "message": "AI Provider inference execution failed.",
-                    "details": [str(exec_err)]
+                    "code": err_code,
+                    "message": err_msg,
+                    "details": [sanitized_err]
                 },
                 "meta": {
                     "request_id": request_id,

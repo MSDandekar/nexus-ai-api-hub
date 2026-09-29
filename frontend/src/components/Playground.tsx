@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Play, CheckCircle2, AlertTriangle, Clock, Cpu, DollarSign, Layers, ChevronRight, Copy, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { Play, CheckCircle2, AlertTriangle, Clock, Cpu, DollarSign, Layers, Copy, Check } from 'lucide-react';
 import { runConnectorApi } from '../api';
+import { useConnectorSession } from '../executionStore';
 
 interface PlaygroundProps {
   connector: any;
@@ -9,68 +10,37 @@ interface PlaygroundProps {
 }
 
 export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApiKeyChange }) => {
-  const [formData, setFormData] = useState<Record<string, any>>({});
-  const [fileData, setFileData] = useState<Record<string, File>>({});
-  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
-  
-  const [loading, setLoading] = useState(false);
-  const [responseResult, setResponseResult] = useState<any>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Explicit session state decoupled from connector definitions and parent rerenders
+  const {
+    formValues: formData,
+    files: fileData,
+    imagePreviews,
+    lastResult: responseResult,
+    executionError: errorMsg,
+    isExecuting: loading,
+    setInput,
+    setFile,
+    startExecution,
+    setExecutionSuccess,
+    setExecutionError,
+    clearOutput,
+  } = useConnectorSession(connector);
+
   const [copied, setCopied] = useState(false);
 
-  // Track previous connector slug to avoid resetting output on parent re-renders
-  const prevSlugRef = React.useRef<string | null>(null);
-
-  // Initialize defaults only when connector slug changes
-  useEffect(() => {
-    if (!connector) return;
-    if (prevSlugRef.current === connector.slug) {
-      return;
-    }
-    prevSlugRef.current = connector.slug;
-
-    const initial: Record<string, any> = {};
-    for (const inp of connector.inputs || []) {
-      if (inp.default_value !== null && inp.default_value !== undefined) {
-        initial[inp.name] = inp.default_value;
-      } else if (inp.type === "boolean") {
-        initial[inp.name] = false;
-      } else if (inp.type === "number") {
-        initial[inp.name] = 0;
-      } else if (inp.type === "json") {
-        initial[inp.name] = "{}";
-      } else {
-        initial[inp.name] = "";
-      }
-    }
-    setFormData(initial);
-    setFileData({});
-    setImagePreviews({});
-    setResponseResult(null);
-    setErrorMsg(null);
-  }, [connector?.slug]);
-
   const handleInputChange = (name: string, val: any) => {
-    setFormData(prev => ({ ...prev, [name]: val }));
+    // User editing input never clears output or error
+    setInput(name, val);
   };
 
   const handleFileChange = (name: string, file: File | null) => {
-    if (!file) return;
-    setFileData(prev => ({ ...prev, [name]: file }));
-
-    if (file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setImagePreviews(prev => ({ ...prev, [name]: e.target?.result as string }));
-      };
-      reader.readAsDataURL(file);
-    }
+    setFile(name, file);
   };
 
   const handleRun = async () => {
-    if (!connector) return;
-    setLoading(true);
-    setErrorMsg(null);
+    if (!connector || loading) return;
+    // Start the new request without automatically clearing previous result
+    startExecution();
 
     try {
       // Process JSON field strings
@@ -86,14 +56,14 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
       }
 
       const res = await runConnectorApi(connector.slug, payloadToSend, apiKey, fileData);
-      setResponseResult(res);
-      if (!res.ok) {
-        setErrorMsg(res.data?.error?.message || "Request failed with error status");
+      if (res.ok) {
+        setExecutionSuccess(res);
+      } else {
+        const msg = res.data?.error?.message || `Request failed with error status (${res.status})`;
+        setExecutionError(msg, res);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || "Network error connecting to API");
-    } finally {
-      setLoading(false);
+      setExecutionError(err.message || "Network error connecting to API");
     }
   };
 
@@ -108,7 +78,7 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
   }
 
   const meta = responseResult?.data?.meta;
-  const isSuccess = responseResult?.data?.success;
+  const isSuccess = responseResult?.data?.success ?? (responseResult ? responseResult.ok : false);
   const traceSteps = meta?.trace || [];
 
   return (
@@ -281,6 +251,18 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
 
         {/* Live Execution Results & Trace */}
         <div>
+          {/* In-Flight Execution Banner (Visible when loading without wiping previous result) */}
+          {loading && (
+            <div className="card" style={{ marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(6,182,212,0.08)', borderColor: 'rgba(6,182,212,0.3)' }}>
+              <div style={{ width: '18px', height: '18px', border: '2px solid rgba(6,182,212,0.3)', borderTopColor: 'var(--accent-cyan)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>Executing API Pipeline...</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Calling provider adapter &amp; validating response schema. Previous output preserved below.</div>
+              </div>
+              <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+            </div>
+          )}
+
           {/* Status Banner */}
           {responseResult && (
             <div className="card" style={{ marginBottom: '18px' }}>
@@ -346,49 +328,64 @@ export const Playground: React.FC<PlaygroundProps> = ({ connector, apiKey, onApi
           {/* Response Payload Display */}
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Structured Response Output</h3>
-              {responseResult && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Structured Response Output</h3>
+                {loading && (
+                  <span className="badge" style={{ background: 'rgba(6,182,212,0.15)', color: 'var(--accent-cyan)', fontSize: '0.72rem' }}>
+                    Executing...
+                  </span>
+                )}
+              </div>
+              {(responseResult || errorMsg) && (
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
+                    type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => { setResponseResult(null); setErrorMsg(null); }}
+                    onClick={clearOutput}
                   >
                     Clear Output
                   </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => copyToClipboard(JSON.stringify(responseResult.data, null, 2))}
-                  >
-                    {copied ? <Check size={13} color="var(--accent-emerald)" /> : <Copy size={13} />}
-                    {copied ? "Copied" : "Copy JSON"}
-                  </button>
+                  {responseResult?.data && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => copyToClipboard(JSON.stringify(responseResult.data, null, 2))}
+                    >
+                      {copied ? <Check size={13} color="var(--accent-emerald)" /> : <Copy size={13} />}
+                      {copied ? "Copied" : "Copy JSON"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
 
-            {loading && (
+            {/* Error Message Box */}
+            {errorMsg && (
+              <div style={{ padding: '14px', background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: 'var(--radius-md)', color: '#FB7185', fontSize: '0.85rem', marginBottom: responseResult ? '12px' : '0' }}>
+                <strong>Execution Error:</strong> {errorMsg}
+              </div>
+            )}
+
+            {/* When loading and no prior result exists */}
+            {loading && !responseResult && !errorMsg && (
               <div style={{ padding: '36px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
                 <div style={{ display: 'inline-block', width: '30px', height: '30px', border: '3px solid rgba(6,182,212,0.2)', borderTopColor: 'var(--accent-cyan)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginBottom: '12px' }} />
-                <p style={{ fontSize: '0.85rem' }}>Calling provider adapter & executing schema validation...</p>
+                <p style={{ fontSize: '0.85rem' }}>Calling provider adapter &amp; executing schema validation...</p>
                 <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
               </div>
             )}
 
-            {!loading && responseResult && (
-              <pre className="code-block" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+            {/* Structured response payload */}
+            {responseResult && (
+              <pre className="code-block" style={{ maxHeight: '420px', overflowY: 'auto', opacity: loading ? 0.7 : 1 }}>
                 {JSON.stringify(responseResult.data, null, 2)}
               </pre>
             )}
 
+            {/* Initial empty state */}
             {!loading && !responseResult && !errorMsg && (
               <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                 Fill out the dynamic input fields on the left and click <strong>Execute API Test</strong> to view real-time results and request trace.
-              </div>
-            )}
-
-            {errorMsg && !responseResult && (
-              <div style={{ padding: '14px', background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: 'var(--radius-md)', color: '#FB7185', fontSize: '0.85rem' }}>
-                {errorMsg}
               </div>
             )}
           </div>

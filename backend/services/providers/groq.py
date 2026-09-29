@@ -2,7 +2,10 @@ import json
 import time
 import httpx
 from typing import Optional, Any
-from backend.services.providers.base import AIProvider, ProviderResult, ImagePayload, FilePayload
+from backend.services.providers.base import (
+    AIProvider, ProviderResult, ImagePayload, FilePayload,
+    ProviderException, ProviderErrorKind, classify_provider_error
+)
 from backend.core.config import settings
 
 class GroqProvider(AIProvider):
@@ -30,7 +33,11 @@ class GroqProvider(AIProvider):
         temperature: float = 0.1
     ) -> ProviderResult:
         if not self.is_configured():
-            raise ValueError("GROQ_API_KEY is not configured in environment variables.")
+            raise ProviderException(
+                error_kind=ProviderErrorKind.AUTHENTICATION_ERROR,
+                message="GROQ_API_KEY is not configured in environment variables.",
+                provider="groq"
+            )
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         messages = []
@@ -56,19 +63,41 @@ class GroqProvider(AIProvider):
             payload["response_format"] = {"type": "json_object"}
 
         start_time = time.perf_counter()
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json=payload
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload
+                )
+        except httpx.TimeoutException:
+            raise ProviderException(
+                error_kind=ProviderErrorKind.TIMEOUT,
+                message=f"Groq request timed out after 45s for {model_id}.",
+                provider="groq"
             )
+        except Exception as net_err:
+            raise ProviderException(
+                error_kind=ProviderErrorKind.PROVIDER_ERROR,
+                message=f"Groq network connection error: {net_err}",
+                provider="groq",
+                raw_error=str(net_err)
+            )
+
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
         if response.status_code != 200:
-            raise RuntimeError(f"Groq API error (HTTP {response.status_code}): {response.text}")
+            kind, msg = classify_provider_error("groq", response.status_code, response.text)
+            raise ProviderException(
+                error_kind=kind,
+                message=msg,
+                provider="groq",
+                status_code=response.status_code,
+                raw_error=response.text
+            )
 
         data = response.json()
         try:

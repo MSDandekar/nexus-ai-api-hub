@@ -3,7 +3,10 @@ import time
 import asyncio
 import httpx
 from typing import Optional, Any
-from backend.services.providers.base import AIProvider, ProviderResult, ImagePayload, FilePayload
+from backend.services.providers.base import (
+    AIProvider, ProviderResult, ImagePayload, FilePayload,
+    ProviderException, ProviderErrorKind, classify_provider_error
+)
 from backend.core.config import settings, get_gemini_api_key
 
 class GeminiProvider(AIProvider):
@@ -34,7 +37,11 @@ class GeminiProvider(AIProvider):
     ) -> ProviderResult:
         api_key = get_gemini_api_key()
         if not api_key:
-            raise ValueError("GEMINI_API_KEY is not configured in environment variables.")
+            raise ProviderException(
+                error_kind=ProviderErrorKind.AUTHENTICATION_ERROR,
+                message="GEMINI_API_KEY is not configured in environment variables.",
+                provider="gemini"
+            )
 
         # Clean model name (remove 'models/' prefix if present)
         clean_model = model_id.replace("models/", "").strip()
@@ -95,18 +102,41 @@ class GeminiProvider(AIProvider):
             }
 
         start_time = time.perf_counter()
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                url,
-                params={"key": api_key},
-                json=payload,
-                headers={"Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    params={"key": api_key},
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+        except httpx.TimeoutException:
+            raise ProviderException(
+                error_kind=ProviderErrorKind.TIMEOUT,
+                message=f"Gemini request timed out after 60s for {clean_model}.",
+                provider="gemini"
             )
+        except Exception as net_err:
+            raise ProviderException(
+                error_kind=ProviderErrorKind.PROVIDER_ERROR,
+                message=f"Gemini network connection error: {net_err}",
+                provider="gemini",
+                raw_error=str(net_err)
+            )
+
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
         if response.status_code != 200:
-            error_text = response.text
-            raise RuntimeError(f"Gemini API error (HTTP {response.status_code}): {error_text}")
+            kind, msg = classify_provider_error("gemini", response.status_code, response.text)
+            if response.status_code == 429:
+                msg = f"Gemini quota exceeded (HTTP 429): Free tier daily quota limit reached for {clean_model}. Please retry later or use another configured provider."
+            raise ProviderException(
+                error_kind=kind,
+                message=msg,
+                provider="gemini",
+                status_code=response.status_code,
+                raw_error=response.text
+            )
 
         data = response.json()
         

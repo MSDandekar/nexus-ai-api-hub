@@ -39,9 +39,15 @@ export function App() {
 
   useEffect(() => {
     loadData();
-    // Periodically update dashboard metrics without re-fetching static connector structures
-    const interval = setInterval(() => {
-      fetchMetrics().then(setMetrics).catch(() => {});
+    // Periodically update dashboard metrics and connectors without resetting user playground session
+    const interval = setInterval(async () => {
+      try {
+        const [m, c] = await Promise.all([fetchMetrics(), fetchConnectors()]);
+        setMetrics(m);
+        if (c.connectors && c.connectors.length > 0) {
+          setConnectors(c.connectors);
+        }
+      } catch (err) {}
     }, 15000);
     return () => clearInterval(interval);
   }, []);

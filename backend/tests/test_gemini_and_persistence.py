@@ -34,6 +34,12 @@ async def test_real_gemini_article_intelligence_request():
             json=payload,
             timeout=30.0
         )
+        if resp.status_code == 502:
+            data = resp.json()
+            if data.get("error", {}).get("code") == "PROVIDER_QUOTA_EXCEEDED":
+                assert "quota exceeded" in data["error"]["message"].lower()
+                assert len(data["meta"]["trace"]) > 0
+                return
         assert resp.status_code == 200, f"Expected 200 OK, got {resp.status_code}: {resp.text}"
         data = resp.json()
         assert data["success"] is True
